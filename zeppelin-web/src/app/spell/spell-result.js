@@ -75,9 +75,10 @@ export class DataWithType {
    * consume 1 data and produce multiple
    * @param data {string}
    * @param customDisplayType
+   * @param type {string}
    * @return {Array<DataWithType>}
    */
-  static parseStringData (data, customDisplayMagic) {
+  static parseStringData (data, customDisplayMagic, type = DefaultDisplayType.TEXT) {
     function availableMagic (magic) {
       return magic && (DefaultDisplayMagic[magic] || customDisplayMagic[magic])
     }
@@ -86,7 +87,7 @@ export class DataWithType {
 
     const gensWithTypes = []
     let mergedGens = []
-    let previousMagic = DefaultDisplayType.TEXT
+    let previousMagic = type
 
     // create `DataWithType` whenever see available display type.
     for (let i = 0; i < splited.length; i++) {
@@ -133,39 +134,30 @@ export class DataWithType {
     const data = dataWithType.getData()
     const type = dataWithType.getType()
 
-    // if the type is specified, just return it
-    // handle non-specified dataWithTypes only
-    if (type) {
-      return new Promise((resolve) => { resolve([dataWithType]) })
-    }
-
-    let wrapped
-
     if (SpellResult.isFunction(data)) {
       // if data is a function, we consider it as ELEMENT type.
-      wrapped = new Promise((resolve) => {
-        const dt = new DataWithType(
-          data, DefaultDisplayType.ELEMENT, magic, textWithoutMagic)
-        const result = [dt]
-        return resolve(result)
-      })
+      return new Promise(resolve =>
+        resolve([new DataWithType(
+          data, DefaultDisplayType.ELEMENT, magic, textWithoutMagic, type
+        )])
+      )
     } else if (SpellResult.isPromise(data)) {
       // if data is a promise,
-      wrapped = data.then(generated => {
-        const result =
-          DataWithType.parseStringData(generated, customDisplayType)
-        return result
-      })
-    } else {
+      return data.then(generated =>
+        DataWithType.parseStringData(generated, customDisplayType, type)
+      )
+    } else if (SpellResult.isObject(data)) {
       // if data is a object, parse it to multiples
-      wrapped = new Promise((resolve) => {
-        const result =
-          DataWithType.parseStringData(data, customDisplayType)
-        return resolve(result)
-      })
+      return new Promise(resolve =>
+        resolve(DataWithType.parseStringData(data, customDisplayType, type))
+      )
+    } else if (type) {
+      // if data type is provided
+      return new Promise(resolve => resolve([dataWithType]))
+    } else {
+      // if any other unhandled case return rejected promise
+      return Promise.reject(new Error('Unhandled data type'))
     }
-
-    return wrapped
   }
 
   /**
@@ -215,9 +207,7 @@ export class SpellResult {
   }
 
   static isObject (data) {
-    return (data &&
-      !SpellResult.isFunction(data) &&
-      !SpellResult.isPromise(data))
+    return data.constructor === Object
   }
 
   static extractMagic (allParagraphText) {
@@ -242,8 +232,7 @@ export class SpellResult {
 
   add (resultData, resultType) {
     if (resultData) {
-      this.dataWithTypes.push(
-        new DataWithType(resultData, resultType))
+      this.dataWithTypes.push(new DataWithType(resultData, resultType))
     }
 
     return this
@@ -255,22 +244,14 @@ export class SpellResult {
    * @return {Promise<Array<DataWithType>>}
    */
   getAllParsedDataWithTypes (customDisplayType, magic, textWithoutMagic) {
-    const promises = this.dataWithTypes.map(dt => {
-      return DataWithType.produceMultipleData(
-        dt, customDisplayType, magic, textWithoutMagic)
-    })
+    const promises = this.dataWithTypes.map(dt =>
+      DataWithType.produceMultipleData(dt, customDisplayType, magic, textWithoutMagic)
+    )
 
     // some promises can include an array so we need to flatten them
-    const flatten = Promise.all(promises).then(values => {
-      return values.reduce((acc, cur) => {
-        if (Array.isArray(cur)) {
-          return acc.concat(cur)
-        } else {
-          return acc.concat([cur])
-        }
-      })
-    })
-
-    return flatten
+    return Promise.all(promises)
+      .then(values =>
+        values.reduce((acc, cur) => acc.concat(Array.isArray(cur) ? cur : [cur]))
+      )
   }
 }
